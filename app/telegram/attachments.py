@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import base64
 import logging
-from pathlib import Path
 
 from app.config import Settings
 
@@ -58,7 +58,12 @@ def _candidates(message: object) -> list[tuple[object, str, str | None]]:
 
 
 async def collect(bot: object, message: object, settings: Settings) -> list[dict[str, str]]:
-    """Download allowed attachments into ``DATA_DIR/tmp`` and return file refs."""
+    """Return inline ``Prompt.FileAttachment`` refs for allowed attachments.
+
+    OpenCode V2 does not read paths from the bot's filesystem: its prompt API
+    expects the bytes themselves (``data`` base64) plus a ``source``. Sending
+    ``{type, path}`` is rejected with a 400 InvalidRequest.
+    """
 
     candidates = _candidates(message)
     if not candidates:
@@ -66,30 +71,26 @@ async def collect(bot: object, message: object, settings: Settings) -> list[dict
     if len(candidates) > MAX_FILES:
         raise AttachmentError(f"I can take at most {MAX_FILES} files per message.")
 
-    settings.tmp_dir.mkdir(parents=True, exist_ok=True)
     refs: list[dict[str, str]] = []
-    for index, (file_obj, name, declared) in enumerate(candidates):
+    for file_obj, name, declared in candidates:
         mime = mime_for(name, declared)
         if mime is None:
             raise AttachmentError(
                 "I can read images, PDF and text files only. That one is a different type."
             )
         check_size(getattr(file_obj, "file_size", None), settings)
-        suffix = ALLOWED_MIME[mime]
-        target = settings.tmp_dir / f"{getattr(file_obj, 'file_unique_id', 'file')[:32]}-{index}{suffix}"
         try:
             remote = await bot.get_file(file_obj.file_id)
-            await remote.download_to_drive(custom_path=Path(target))
+            raw = await remote.download_as_bytearray()
         except Exception as exc:  # network or Telegram refusal
             log.warning("attachment download failed: %s", type(exc).__name__)
             raise AttachmentError("I could not download that file from Telegram.") from exc
-        refs.append({"type": "file", "path": str(target), "mime": mime})
+        refs.append(
+            {
+                "data": base64.b64encode(bytes(raw)).decode("ascii"),
+                "mime": mime,
+                "name": name,
+                "source": {"type": "inline"},
+            }
+        )
     return refs
-
-
-def cleanup(refs: list[dict[str, str]]) -> None:
-    for ref in refs:
-        try:
-            Path(ref["path"]).unlink(missing_ok=True)
-        except OSError:  # pragma: no cover - best effort
-            log.debug("could not remove temp attachment")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+import base64
 from types import SimpleNamespace
 
 import pytest
@@ -14,8 +14,8 @@ class FakeFile:
         self.file_unique_id = "uniq-1"
         self.file_size = size
 
-    async def download_to_drive(self, custom_path: Path) -> None:
-        Path(custom_path).write_bytes(b"payload")
+    async def download_as_bytearray(self) -> bytearray:
+        return bytearray(b"payload")
 
 
 class FakeBot:
@@ -42,11 +42,11 @@ def document_message(name: str, mime: str | None, size: int = 100):
     )
 
 
-async def test_photo_is_accepted_and_downloaded(settings) -> None:
+async def test_photo_is_accepted_as_inline_bytes(settings) -> None:
     refs = await collect(FakeBot(), photo_message(), settings)
     assert refs and refs[0]["mime"] == "image/jpeg"
-    assert Path(refs[0]["path"]).exists()
-    assert refs[0]["path"].startswith(str(settings.tmp_dir))
+    assert refs[0]["source"] == {"type": "inline"}
+    assert base64.b64decode(refs[0]["data"]) == b"payload"
 
 
 async def test_oversized_file_is_refused_with_the_limit(settings) -> None:

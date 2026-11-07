@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from types import SimpleNamespace
 
 import pytest
@@ -15,10 +16,8 @@ class FakeFile:
     file_size = 1024
     file_unique_id = "uniq"
 
-    async def download_to_drive(self, custom_path) -> None:
-        from pathlib import Path
-
-        Path(custom_path).write_bytes(b"png")
+    async def download_as_bytearray(self) -> bytearray:
+        return bytearray(b"png")
 
 
 class FakeBot:
@@ -51,6 +50,7 @@ async def test_photo_with_caption_reaches_the_agent_as_a_file(
 
     files = fake_server.files[0]
     assert files and files[0]["mime"] == "image/jpeg"
-    assert files[0]["path"].startswith(str(settings.tmp_dir))
+    assert files[0]["source"] == {"type": "inline"}
+    assert base64.b64decode(files[0]["data"]) == b"png"
     _, prompt, _ = fake_server.prompts[0]
     assert prompt.endswith("what is wrong here?")

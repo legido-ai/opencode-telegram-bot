@@ -17,6 +17,8 @@ class FakeOpenCode:
         self.script = script if script is not None else ["Hello", " from the agent"]
         self.sessions: dict[str, dict[str, Any]] = {}
         self.prompts: list[tuple[str, str, dict[str, Any]]] = []
+        self.deliveries: list[str | None] = []
+        self.gate: asyncio.Event | None = None
         self.interrupts: list[str] = []
         self.permission_replies: list[tuple[str, str, str]] = []
         self.form_replies: list[tuple[str, str, dict[str, Any]]] = []
@@ -54,6 +56,8 @@ class FakeOpenCode:
     async def _stream_answer(self, session_id: str) -> None:
         await asyncio.sleep(0)
         self.emit("session.execution.started", session_id)
+        if self.gate is not None:
+            await self.gate.wait()
         if self.answer_error:
             self.emit("session.execution.failed", session_id)
             return
@@ -90,6 +94,13 @@ class FakeOpenCode:
 
         if path == "/api/session" and method == "GET":
             return httpx.Response(200, json={"data": list(self.sessions.values())})
+
+        if path == "/api/session/active" and method == "GET":
+            running: dict[str, Any] = {}
+            if self.gate is not None and not self.gate.is_set():
+                for session_id, _ in self.prompts:
+                    running[session_id] = {"type": "running"}
+            return httpx.Response(200, json={"data": running})
 
         if path.endswith("/context") and method == "GET":
             session_id = path.split("/")[3]
@@ -141,6 +152,7 @@ class FakeOpenCode:
                 return httpx.Response(self.fail_prompt, json={"error": "nope"})
             body = json.loads(request.content or b"{}")
             self.prompts.append((session_id, body.get("text", ""), body.get("metadata", {})))
+            self.deliveries.append(body.get("delivery"))
             self.files.append(body.get("files", []))
             if self.publish_on_prompt:
                 asyncio.get_running_loop().create_task(self._stream_answer(session_id))

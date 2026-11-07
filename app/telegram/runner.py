@@ -10,7 +10,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -100,6 +100,12 @@ class Runner:
         self._queues: dict[tuple[int, int], asyncio.Queue[Job]] = {}
         self._workers: dict[tuple[int, int], asyncio.Task[None]] = {}
         self._active_session: dict[tuple[int, int], str] = {}
+        # Messages that arrive while a run is in flight are steered into that
+        # run instead of waiting in the local queue. ``_steering`` covers the
+        # short window where the POST is in flight and the run may hit idle.
+        self._consuming: set[tuple[int, int]] = set()
+        self._steer_counts: dict[tuple[int, int], int] = {}
+        self._steering: set[tuple[int, int]] = set()
         # Chats where pinning is refused (plain member, no rights): stop asking.
         self._pin_denied: set[tuple[int, int]] = set()
         self._started = False
@@ -136,6 +142,13 @@ class Runner:
             job.message.chat_id, job.message.thread_id, job.message.chat_type, job.message.chat_title
         )
         session_id = conversation.active_session_id
+        if session_id and key in self._consuming:
+            # The TUI model: a prompt sent while the agent is busy joins the
+            # running turn at its next step boundary. Do not queue it locally
+            # and do not open a second answer message: the live stream keeps
+            # streaming into the same progress message, with one footer.
+            await self._steer(job, session_id)
+            return
         turn_id = self._store.record_turn(
             chat_id=job.message.chat_id,
             thread_id=job.message.thread_id,
@@ -169,6 +182,67 @@ class Runner:
                 log.exception("run failed", extra={"chat_id": key[0], "thread_id": key[1]})
             finally:
                 queue.task_done()
+
+    async def _steer(self, job: Job, session_id: str) -> None:
+        """Admit a mid-run message into the live turn and acknowledge it."""
+
+        if self.messenger is None:
+            return
+        message = job.message
+        key = message.key
+        participants = self._store.roster()
+        prompt = build_prompt(message, job.trigger, participants, note=job.prompt_note)
+        turn_id = self._store.record_turn(
+            chat_id=message.chat_id,
+            thread_id=message.thread_id,
+            session_id=session_id,
+            user_id=message.user_id,
+            update_id=message.update_id,
+            trigger=job.trigger.kind,
+            quote_of=message.quote.message_id if message.quote else None,
+        )
+        if turn_id is None:
+            return
+        self._store.start_turn(turn_id)
+        await self.messenger.send_typing(message.chat_id, message.thread_id)
+        self._steering.add(key)
+        try:
+            await self._client.prompt(
+                session_id,
+                prompt,
+                files=job.files,
+                metadata={
+                    "telegram": {
+                        "chat_id": message.chat_id,
+                        "thread_id": message.thread_id,
+                        "user_id": message.user_id,
+                        "update_id": message.update_id,
+                        "delivery": "steer",
+                    }
+                },
+                delivery="steer",
+            )
+        except OpenCodeError:
+            self._store.finish_turn(turn_id, "failed", error_kind="steer_failed")
+            log.warning("could not steer the running turn", extra={"chat_id": message.chat_id})
+            await self.messenger.send_text(
+                message.chat_id,
+                "⚠️ OpenCode is busy and I could not pass this into the running turn. "
+                "Send it again when the current answer finishes.",
+                thread_id=message.thread_id,
+            )
+            return
+        finally:
+            self._steering.discard(key)
+        self._steer_counts[key] = self._steer_counts.get(key, 0) + 1
+        self._store.finish_turn(turn_id, "steered")
+        await self.messenger.send_text(
+            message.chat_id,
+            "⏳ OpenCode is still processing the previous message. "
+            "I sent this one as a steer into the running turn.",
+            thread_id=message.thread_id,
+            reply_to=message.message_id if message.is_private else None,
+        )
 
     # -- session binding -------------------------------------------------
 
@@ -293,6 +367,7 @@ class Runner:
                 editor.replace(answer)
             else:
                 events = self._bus.subscribe(session_id)
+                self._consuming.add(key)
                 try:
                     await self._client.prompt(
                         session_id,
@@ -307,8 +382,11 @@ class Runner:
                             }
                         },
                     )
-                    await self._consume(events, editor, state)
+                    await self._consume(
+                        events, editor, state, steers_seen=self._steer_counts.get(key, 0)
+                    )
                 finally:
+                    self._consuming.discard(key)
                     self._bus.unsubscribe(session_id)
 
             if filter_audio_meta:
@@ -447,7 +525,12 @@ class Runner:
             log.warning("audio reply delivery failed: %s", type(exc).__name__)
 
     async def _consume(
-        self, events: asyncio.Queue[Event], editor: StreamEditor, state: RunState
+        self,
+        events: asyncio.Queue[Event],
+        editor: StreamEditor,
+        state: RunState,
+        *,
+        steers_seen: int = 0,
     ) -> None:
         while True:
             try:
@@ -469,7 +552,28 @@ class Runner:
                     text = event.text
                     if text and not editor.text.strip():
                         editor.append(text)
+                    return
+                # A steer admitted near the idle boundary starts the next
+                # drain on the server. Keep consuming so its answer lands in
+                # the same message instead of being lost.
+                admitted = self._steer_counts.get(state.conversation_key, 0)
+                if admitted > steers_seen:
+                    steers_seen = admitted
+                    if await self._session_busy(state.conversation_key, state.session_id):
+                        continue
                 return
+
+    async def _session_busy(self, key: tuple[int, int], session_id: str) -> bool:
+        """Wait out an in-flight steer POST, then ask the server if it runs."""
+
+        for _ in range(20):
+            if key not in self._steering:
+                break
+            await asyncio.sleep(0.1)
+        try:
+            return session_id in await self._client.active_sessions()
+        except OpenCodeError:
+            return False
 
     async def _last_error(self, session_id: str) -> str | None:
         try:
@@ -720,7 +824,3 @@ class Runner:
             + f"\naudio replies: {tts_mode}"
             + f"\nqueued: {depth}"
         )
-
-
-def file_refs(paths: Sequence[tuple[str, str]]) -> list[dict[str, str]]:
-    return [{"type": "file", "path": path, "mime": mime} for path, mime in paths]

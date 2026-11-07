@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versions use semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- Attachments now use OpenCode V2's `Prompt.FileAttachment` shape (`data`
+  base64, `mime`, `source: inline`). The old `{type, path}` payload was rejected
+  with a 400, so a photo with a caption ended in “The agent server rejected that
+  request.”
+
+### Added
+
+- A message sent while OpenCode is running joins the live turn with
+  `delivery: "steer"` and the chat gets a short “still processing, sent as a
+  steer” notice. The steered answer streams into the same message with one
+  sign-off, matching the TUI and `grinev/opencode-telegram-bot`.
+
 ## [0.2.1] — 2026-11-07
 
 The completion line is a message of its own again, because a reply keyboard can

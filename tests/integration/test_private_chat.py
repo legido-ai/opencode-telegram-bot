@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -47,6 +48,31 @@ async def test_second_prompt_reuses_the_session(bot_app: BotApp, fake_server, me
     first_session = fake_server.prompts[0][0]
     second_session = fake_server.prompts[1][0]
     assert first_session == second_session
+
+
+async def test_message_while_busy_is_steered_into_the_running_turn(
+    bot_app: BotApp, fake_server, messenger, store
+) -> None:
+    fake_server.gate = asyncio.Event()
+    await send(bot_app, update("first", chat_type="private", chat_id=111, update_id=201))
+    await wait_for(lambda: len(fake_server.prompts) == 1)
+
+    await send(bot_app, update("second", chat_type="private", chat_id=111, update_id=202))
+    await wait_for(lambda: len(fake_server.prompts) == 2)
+
+    assert fake_server.deliveries == [None, "steer"]
+    assert fake_server.prompts[0][0] == fake_server.prompts[1][0]
+    await wait_for(
+        lambda: any("steer into the running turn" in item.text for item in messenger.sent)
+    )
+    assert store.recent_turns(2)[0].status == "steered"
+
+    fake_server.gate.set()
+    await wait_for(
+        lambda: any(
+            "I'm done" in item.text for item in messenger.sent + messenger.edited
+        )
+    )
 
 
 async def test_abort_interrupts_the_bound_session(bot_app: BotApp, fake_server, store, messenger) -> None:

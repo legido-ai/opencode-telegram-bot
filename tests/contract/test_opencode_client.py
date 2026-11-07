@@ -35,7 +35,14 @@ async def test_prompt_payload_matches_contract() -> None:
     await client.prompt(
         "ses_1",
         "hello",
-        files=[{"type": "file", "path": "/data/tmp/a.png", "mime": "image/png"}],
+        files=[
+            {
+                "data": "aGVsbG8=",
+                "mime": "image/png",
+                "name": "a.png",
+                "source": {"type": "inline"},
+            }
+        ],
         metadata={"telegram": {"user_id": 111}},
     )
     request = recorder.requests[0]
@@ -44,6 +51,15 @@ async def test_prompt_payload_matches_contract() -> None:
     body = recorder.bodies[0]
     assert set(body) == {"text", "files", "metadata"}
     assert body["text"] == "hello"
+    assert body["files"][0]["source"] == {"type": "inline"}
+    await client.aclose()
+
+
+async def test_prompt_can_steer_a_running_turn() -> None:
+    recorder = Recorder(payload={"data": {"id": "msg_1"}})
+    client = build(recorder)
+    await client.prompt("ses_1", "change of plan", delivery="steer")
+    assert recorder.bodies[0]["delivery"] == "steer"
     await client.aclose()
 
 

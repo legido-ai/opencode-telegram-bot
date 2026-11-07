@@ -148,15 +148,35 @@ class OpenCodeClient:
         session_id: str,
         text: str,
         *,
-        files: Sequence[dict[str, str]] | None = None,
+        files: Sequence[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
+        delivery: str | None = None,
+        resume: bool | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"text": text}
         if files:
             body["files"] = list(files)
         if metadata:
             body["metadata"] = metadata
+        if delivery:
+            # "steer" joins the run in progress at its next step boundary;
+            # "queue" waits for the next idle boundary.
+            body["delivery"] = delivery
+        if resume is not None:
+            body["resume"] = resume
         return await self._json("POST", f"/api/session/{session_id}/prompt", json=body) or {}
+
+    async def active_sessions(self) -> set[str]:
+        """Sessions currently being drained by the server (foreground runs)."""
+
+        data = await self._json("GET", "/api/session/active")
+        return set(data) if isinstance(data, dict) else set()
+
+    async def inbox(self, session_id: str) -> list[dict[str, Any]]:
+        """Durable inputs admitted but not yet delivered to the session."""
+
+        data = await self._json("GET", f"/api/session/{session_id}/inbox")
+        return list(data) if isinstance(data, list) else []
 
     # -- C5 interrupt ----------------------------------------------------
 

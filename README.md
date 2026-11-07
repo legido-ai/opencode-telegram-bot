@@ -43,7 +43,9 @@ Telegram ──long poll──► app.telegram.app  ──► trigger + identity
   builds a URL.
 - `app/telegram/trigger.py` decides whether the message is addressed to the bot.
 - `app/telegram/runner.py` owns one queue per conversation, so two humans in a
-  room are answered in order and sessions never interleave.
+  room are answered in order and sessions never interleave. A message that
+  arrives while a run is in flight is steered into it (`delivery: "steer"`) and
+  the chat gets a short “still processing” notice.
 - `app/store.py` is the durable memory; `app/health.py` is the operator view.
 
 ## Container image

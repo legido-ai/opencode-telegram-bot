@@ -296,7 +296,9 @@ async def test_auto_speaks_voice_requests_only(
 
     await send_text(app, "hello", update_id=21)
     await wait_for(lambda: len(fake_server.prompts) == 1)
-    await wait_for(lambda: bool(messenger.edited) or bool(messenger.sent))
+    await wait_for(
+        lambda: any("I'm done" in item.text for item in messenger.sent + messenger.edited)
+    )
     assert messenger.audio == []
 
     await send_voice(app, voice_update(chat_id=111, chat_type="private", update_id=22), FakeBot())

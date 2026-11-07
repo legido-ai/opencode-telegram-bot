@@ -102,6 +102,9 @@ class FakeOpenCode:
                     running[session_id] = {"type": "running"}
             return httpx.Response(200, json={"data": running})
 
+        if path.endswith("/inbox") and method == "GET":
+            return httpx.Response(200, json={"data": []})
+
         if path.endswith("/context") and method == "GET":
             session_id = path.split("/")[3]
             if not any(prompt[0] == session_id for prompt in self.prompts):

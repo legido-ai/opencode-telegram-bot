@@ -564,14 +564,21 @@ class Runner:
                 return
 
     async def _session_busy(self, key: tuple[int, int], session_id: str) -> bool:
-        """Wait out an in-flight steer POST, then ask the server if it runs."""
+        """Wait out an in-flight steer POST, then ask the server if work remains."""
 
         for _ in range(20):
             if key not in self._steering:
                 break
             await asyncio.sleep(0.1)
         try:
-            return session_id in await self._client.active_sessions()
+            if session_id in await self._client.active_sessions():
+                return True
+        except OpenCodeError:
+            return False
+        try:
+            # A steer admitted right at the idle boundary can still sit in the
+            # durable inbox for a moment before its drain is marked active.
+            return bool(await self._client.inbox(session_id))
         except OpenCodeError:
             return False
 

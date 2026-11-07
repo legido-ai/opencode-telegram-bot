@@ -557,7 +557,7 @@ class Runner:
                 # drain on the server. Keep consuming so its answer lands in
                 # the same message instead of being lost.
                 admitted = self._steer_counts.get(state.conversation_key, 0)
-                if admitted > steers_seen:
+                if admitted > steers_seen or state.conversation_key in self._steering:
                     steers_seen = admitted
                     if await self._session_busy(state.conversation_key, state.session_id):
                         continue

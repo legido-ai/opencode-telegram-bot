@@ -7,10 +7,10 @@ Keep a Changelog; versions use semantic versioning.
 
 ### Fixed
 
-- Attachments now use OpenCode V2's `Prompt.FileAttachment` shape (`data`
-  base64, `mime`, `source: inline`). The old `{type, path}` payload was rejected
-  with a 400, so a photo with a caption ended in “The agent server rejected that
-  request.”
+- Attachments now use OpenCode V2's `PromptInput.FileAttachment` shape: a
+  `data:<mime>;base64,...` URI plus an optional name. The old `{type, path}`
+  payload was rejected with a 400, so a photo with a caption ended in “The agent
+  server rejected that request.”
 
 ### Added
 

@@ -49,8 +49,9 @@ async def test_photo_with_caption_reaches_the_agent_as_a_file(
     await wait_for(lambda: len(fake_server.prompts) == 1)
 
     files = fake_server.files[0]
-    assert files and files[0]["mime"] == "image/jpeg"
-    assert files[0]["source"] == {"type": "inline"}
-    assert base64.b64decode(files[0]["data"]) == b"png"
+    assert files
+    prefix, encoded = files[0]["uri"].split(",", 1)
+    assert prefix == "data:image/jpeg;base64"
+    assert base64.b64decode(encoded) == b"png"
     _, prompt, _ = fake_server.prompts[0]
     assert prompt.endswith("what is wrong here?")

@@ -58,11 +58,11 @@ def _candidates(message: object) -> list[tuple[object, str, str | None]]:
 
 
 async def collect(bot: object, message: object, settings: Settings) -> list[dict[str, str]]:
-    """Return inline ``Prompt.FileAttachment`` refs for allowed attachments.
+    """Return ``PromptInput.FileAttachment`` refs for allowed attachments.
 
-    OpenCode V2 does not read paths from the bot's filesystem: its prompt API
-    expects the bytes themselves (``data`` base64) plus a ``source``. Sending
-    ``{type, path}`` is rejected with a 400 InvalidRequest.
+    OpenCode V2 does not read paths from the bot's filesystem: the prompt API
+    accepts a ``uri`` and parses a ``data:<mime>;base64,...`` URI into the
+    inline bytes itself. Sending ``{type, path}`` is rejected with a 400.
     """
 
     candidates = _candidates(message)
@@ -85,12 +85,6 @@ async def collect(bot: object, message: object, settings: Settings) -> list[dict
         except Exception as exc:  # network or Telegram refusal
             log.warning("attachment download failed: %s", type(exc).__name__)
             raise AttachmentError("I could not download that file from Telegram.") from exc
-        refs.append(
-            {
-                "data": base64.b64encode(bytes(raw)).decode("ascii"),
-                "mime": mime,
-                "name": name,
-                "source": {"type": "inline"},
-            }
-        )
+        encoded = base64.b64encode(bytes(raw)).decode("ascii")
+        refs.append({"uri": f"data:{mime};base64,{encoded}", "name": name})
     return refs

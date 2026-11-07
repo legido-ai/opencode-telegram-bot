@@ -42,11 +42,12 @@ def document_message(name: str, mime: str | None, size: int = 100):
     )
 
 
-async def test_photo_is_accepted_as_inline_bytes(settings) -> None:
+async def test_photo_is_accepted_as_a_data_uri(settings) -> None:
     refs = await collect(FakeBot(), photo_message(), settings)
-    assert refs and refs[0]["mime"] == "image/jpeg"
-    assert refs[0]["source"] == {"type": "inline"}
-    assert base64.b64decode(refs[0]["data"]) == b"payload"
+    assert refs
+    prefix, encoded = refs[0]["uri"].split(",", 1)
+    assert prefix == "data:image/jpeg;base64"
+    assert base64.b64decode(encoded) == b"payload"
 
 
 async def test_oversized_file_is_refused_with_the_limit(settings) -> None:
@@ -63,7 +64,8 @@ async def test_unsupported_type_is_refused(settings) -> None:
 
 async def test_text_document_is_accepted(settings) -> None:
     refs = await collect(FakeBot(), document_message("notes.md", None), settings)
-    assert refs[0]["mime"] == "text/markdown"
+    assert refs[0]["uri"].startswith("data:text/markdown;base64,")
+    assert refs[0]["name"] == "notes.md"
 
 
 async def test_message_without_files_returns_empty(settings) -> None:

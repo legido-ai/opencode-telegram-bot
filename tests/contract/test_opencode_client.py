@@ -35,14 +35,7 @@ async def test_prompt_payload_matches_contract() -> None:
     await client.prompt(
         "ses_1",
         "hello",
-        files=[
-            {
-                "data": "aGVsbG8=",
-                "mime": "image/png",
-                "name": "a.png",
-                "source": {"type": "inline"},
-            }
-        ],
+        files=[{"uri": "data:image/png;base64,aGVsbG8=", "name": "a.png"}],
         metadata={"telegram": {"user_id": 111}},
     )
     request = recorder.requests[0]
@@ -51,7 +44,7 @@ async def test_prompt_payload_matches_contract() -> None:
     body = recorder.bodies[0]
     assert set(body) == {"text", "files", "metadata"}
     assert body["text"] == "hello"
-    assert body["files"][0]["source"] == {"type": "inline"}
+    assert body["files"][0]["uri"].startswith("data:image/png;base64,")
     await client.aclose()
 
 

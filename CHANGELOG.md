@@ -7,6 +7,18 @@ Keep a Changelog; versions use semantic versioning.
 
 ### Fixed
 
+- `form.created` events are read from the V2 `data.form` envelope, so the
+  agent's `question` tool now becomes a Telegram keyboard instead of leaving the
+  run waiting forever and ending in `[timed out waiting for the agent]`. Form
+  answers are sent as `{"answer": {field: value}}`, including multi-question
+  forms.
+- A message that combines a task with an audio instruction (“foo bar. Reply with
+  audio in Spanish”) now runs “foo bar” through the agent and speaks its answer.
+  Only an audio request with no task left uses the transient text endpoint.
+  English `reply`/`answer`/`respond` requests are recognised too.
+- A run that stays silent past `RUN_TIMEOUT_SECONDS` (default 1800) is marked
+  failed, interrupted on the server, and reported as a timeout instead of being
+  recorded as a success. This releases the session for the next message.
 - Attachments now use OpenCode V2's `PromptInput.FileAttachment` shape: a
   `data:<mime>;base64,...` URI plus an optional name. The old `{type, path}`
   payload was rejected with a 400, so a photo with a caption ended in “The agent

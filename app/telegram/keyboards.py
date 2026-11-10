@@ -66,12 +66,17 @@ def permission_keyboard(session_id: str, request_id: str) -> Any:
     )
 
 
-def form_keyboard(session_id: str, form_id: str, options: list[str]) -> Any:
+def form_keyboard(session_id: str, fields: list[dict[str, Any]], active: int = 0) -> Any:
+    """Buttons for one form field; the callback carries indices, not ids."""
+
+    if not (0 <= active < len(fields)):
+        return None
+    options = fields[active].get("options") or []
     rows = [
-        [(option[:40], f"f:{session_id}:{form_id}:{index}")]
+        [(str(option.get("label") or option.get("value"))[:40], f"f:{session_id}:{active}:{index}")]
         for index, option in enumerate(options[:8])
     ]
-    return _markup(rows)
+    return _markup(rows) if rows else None
 
 
 def provider_keyboard(providers: list[tuple[str, str]]) -> Any:

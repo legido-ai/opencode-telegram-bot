@@ -73,7 +73,14 @@ async def run() -> int:
     state = HealthState()
     stt = SttClient(settings)
     tts = TtsClient(settings)
-    runner = Runner(settings=settings, store=store, client=client, bus=bus, tts=tts)
+    runner = Runner(
+        settings=settings,
+        store=store,
+        client=client,
+        bus=bus,
+        tts=tts,
+        run_timeout=settings.run_timeout_seconds,
+    )
 
     bot_app = BotApp(
         settings=settings, store=store, client=client, runner=runner, state=state, stt=stt

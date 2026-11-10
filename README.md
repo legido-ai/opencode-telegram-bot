@@ -156,12 +156,20 @@ the text in that language and selects the matching voice. Without an explicit
 language, an audio request uses `TTS_VOICE_AUDIO` (English by default). TTS
 itself does not translate; the model writes the requested language.
 
-When a message asks for audio, the bot does **not** send it to the coding agent:
-that agent reaches for tools, builds a TTS script and asks for a phrase. The bot
-instead uses OpenCode's transient text endpoint to produce only the words to
-speak, holds them back until the turn finishes, and removes any capability
-disclaimer. The cleaned phrase is what appears in the chat and what gets spoken.
-Nothing is injected into the session and no tools run.
+A message can carry both a task and an audio instruction, for example
+**“foo bar. Reply with audio in Spanish”**. The bot strips only the delivery
+instruction, sends **“foo bar”** to the coding agent with a note to answer in
+Spanish, then speaks the answer. When nothing remains after stripping (for
+example **“genera un audio corto con una frase”**), the bot does **not** start
+the coding agent: that agent reaches for tools, builds a TTS script and asks for
+a phrase. Instead it uses OpenCode's transient text endpoint to produce only the
+words to speak, holds them back until the turn finishes, and removes any
+capability disclaimer. The cleaned phrase is what appears in the chat and what
+gets spoken.
+
+A run that stays silent past `RUN_TIMEOUT_SECONDS` (default 1800) is stopped on
+the server and reported as a timeout, so the session is free for the next
+message.
 
 Speech runs fully locally in the shared `speech` compose project:
 
@@ -236,6 +244,7 @@ See `.env.example` for the full list. The important ones:
 | `OPENCODE_SERVER_PASSWORD` | server password (`opencode service get password`) |
 | `DATA_DIR` | SQLite, temp attachments; mount a volume here |
 | `MAX_ATTACHMENT_MB` | per-file limit, default 20 (also voice/audio) |
+| `RUN_TIMEOUT_SECONDS` | silence budget for one agent turn, default 1800 |
 | `STT_API_URL` / `STT_API_KEY` | Whisper-compatible transcription endpoint; empty disables voice input |
 | `STT_MODEL` / `STT_LANGUAGE` | model name and optional language hint (`es`, `en`, …) |
 | `STT_REQUEST_FORMAT` | `multipart` (default) or `json` (base64 `input_audio`) |

@@ -23,8 +23,12 @@ reply with TTS, without leaving the Telegram conversation.
 4. `TTS_VOICE` is the default voice (Spanish in this deployment).
    `TTS_VOICE_AUDIO` is used when the user explicitly asks for an audio, and the
    text for that path is generated in English.
-5. Explicit audio requests bypass the coding agent and use OpenCode's transient
-   `/api/session/{id}/generate`: no tools, no workspace changes, no TTS script.
+5. An audio request that carries no task of its own (for example “genera un
+   audio corto con una frase”) bypasses the coding agent and uses OpenCode's
+   transient `/api/session/{id}/generate`: no tools, no workspace changes, no
+   TTS script. A request that combines a task with an audio instruction (for
+   example “foo bar. Reply with audio in Spanish”) strips the delivery
+   instruction, runs the task through the agent, and speaks its answer.
 6. Capability disclaimers are filtered from text and speech; the answer is held
    until the filter has run so they never reach the chat.
 7. Failures in STT or TTS are reported without losing the text answer or

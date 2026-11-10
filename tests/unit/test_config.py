@@ -136,3 +136,18 @@ def test_rejects_bad_attachment_limit(tmp_path) -> None:
                 "DATA_DIR": str(tmp_path),
             }
         )
+
+
+def test_run_timeout_defaults_and_validates(tmp_path) -> None:
+    base = {
+        "TELEGRAM_BOT_TOKEN": "123456:TESTTOKENVALUE",
+        "TELEGRAM_ALLOWED_USER_IDS": "111",
+        "OPENCODE_SERVER_PASSWORD": "server-secret-value",
+        "DATA_DIR": str(tmp_path),
+    }
+    assert Settings.from_env(base).run_timeout_seconds == 1800
+    assert Settings.from_env({**base, "RUN_TIMEOUT_SECONDS": "60"}).run_timeout_seconds == 60
+    with pytest.raises(ConfigError):
+        Settings.from_env({**base, "RUN_TIMEOUT_SECONDS": "soon"})
+    with pytest.raises(ConfigError):
+        Settings.from_env({**base, "RUN_TIMEOUT_SECONDS": "0"})

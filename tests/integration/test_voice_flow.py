@@ -221,6 +221,34 @@ async def test_english_audio_request_uses_the_english_voice(
     assert "English" in fake_server.generated[0]
 
 
+async def test_audio_request_with_a_task_runs_the_task_and_speaks_it(
+    settings, store, client, bus, health, messenger, fake_server
+) -> None:
+    tts = FakeTts()
+    stt = FakeStt(text="foo bar. Reply with audio in spanish")
+    runner = Runner(
+        settings=settings, store=store, client=client, bus=bus, messenger=messenger, tts=tts
+    )
+    app = BotApp(
+        settings=settings, store=store, client=client, runner=runner, state=health, stt=stt
+    )
+    app.bot_id = BOT_ID
+    app.bot_username = BOT_USERNAME
+    app.messenger = messenger
+
+    await send_voice(app, voice_update(chat_id=111, chat_type="private", update_id=52), FakeBot())
+
+    await wait_for(lambda: bool(messenger.audio))
+    assert len(fake_server.prompts) == 1
+    _session, prompt, _metadata = fake_server.prompts[0]
+    assert "foo bar" in prompt
+    assert "Reply with audio" not in prompt
+    assert "Spanish (Castilian)" in prompt
+    assert fake_server.generated == []
+    assert tts.voices == ["es-ES-ElviraNeural"]
+    assert tts.texts == ["Hello from the agent"]
+
+
 async def test_audio_request_generates_the_phrase_instead_of_using_tools(
     settings, store, client, bus, health, messenger, fake_server
 ) -> None:

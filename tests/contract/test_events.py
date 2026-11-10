@@ -5,7 +5,7 @@ import asyncio
 import httpx
 
 from app.opencode.client import OpenCodeClient
-from app.opencode.events import decode_sse_data, iter_sse
+from app.opencode.events import decode_event, decode_sse_data, iter_sse
 
 
 def _sse_transport() -> httpx.MockTransport:
@@ -52,3 +52,53 @@ async def test_event_bus_only_delivers_to_the_subscribed_session() -> None:
     assert bus.publish(Event(kind="x", session_id="ses_b")) == 0
     assert bus.publish(Event(kind="x", session_id="ses_a")) == 1
     assert await asyncio.wait_for(queue.get(), timeout=1) is not None
+
+
+def test_form_created_payload_is_nested_under_data_form() -> None:
+    event = decode_event(
+        {
+            "type": "form.created",
+            "id": "evt_1",
+            "data": {
+                "form": {
+                    "id": "frm_1",
+                    "sessionID": "ses_1",
+                    "title": "Questions",
+                    "metadata": {"kind": "question"},
+                    "fields": [
+                        {
+                            "key": "q0",
+                            "title": "Clarify OZI",
+                            "type": "string",
+                            "options": [{"value": "OCI", "label": "OCI compute instances"}],
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    assert event is not None
+    assert event.session_id == "ses_1"
+    assert event.get("id") == "frm_1"
+    assert event.get("title") == "Questions"
+    assert event.get("fields")[0]["key"] == "q0"
+
+
+def test_permission_asked_payload_uses_flat_data() -> None:
+    event = decode_event(
+        {
+            "type": "permission.asked",
+            "data": {
+                "id": "per_1",
+                "sessionID": "ses_1",
+                "action": "bash",
+                "resources": ["rm -rf build"],
+            },
+        }
+    )
+
+    assert event is not None
+    assert event.session_id == "ses_1"
+    assert event.get("id") == "per_1"
+    assert event.get("action") == "bash"

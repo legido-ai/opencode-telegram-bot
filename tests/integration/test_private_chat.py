@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.telegram.app import BotApp
+from app.telegram.runner import Runner
 from tests.helpers import wait_for
 from tests.telegram_factory import BOT_ID, BOT_USERNAME, update
 
@@ -73,6 +74,40 @@ async def test_message_while_busy_is_steered_into_the_running_turn(
             "I'm done" in item.text for item in messenger.sent + messenger.edited
         )
     )
+
+
+async def test_silent_run_times_out_is_stopped_and_reported(
+    settings, store, client, bus, health, messenger, fake_server
+) -> None:
+    fake_server.gate = asyncio.Event()
+    runner = Runner(
+        settings=settings,
+        store=store,
+        client=client,
+        bus=bus,
+        messenger=messenger,
+        run_timeout=0.05,
+    )
+    app = BotApp(settings=settings, store=store, client=client, runner=runner, state=health)
+    app.bot_id = BOT_ID
+    app.bot_username = BOT_USERNAME
+    app.messenger = messenger
+    runner.set_messenger(messenger)
+    runner.set_interaction_hook(app.on_interaction)
+
+    await send(app, update("long task", chat_type="private", chat_id=111, update_id=150))
+    await wait_for(
+        lambda: any(
+            "did not answer in time" in item.text for item in messenger.sent + messenger.edited
+        )
+    )
+
+    session_id = store.get_conversation(111, 0).active_session_id
+    assert session_id is not None
+    assert fake_server.interrupts == [session_id]
+    assert store.recent_turns(1)[0].status == "failed"
+    assert not any("timed out waiting for the agent" in item.text for item in messenger.edited)
+    fake_server.gate.set()
 
 
 async def test_abort_interrupts_the_bound_session(bot_app: BotApp, fake_server, store, messenger) -> None:

@@ -41,6 +41,48 @@ from app.telegram.types import Inbound, Trigger
 log = logging.getLogger("bot.app")
 
 
+def _form_fields(raw: object) -> list[dict[str, Any]]:
+    """Normalise ``Form.Info.fields`` into the option lists a keyboard can show."""
+
+    fields: list[dict[str, Any]] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        if not key:
+            continue
+        options: list[dict[str, str]] = []
+        for option in item.get("options") or []:
+            if isinstance(option, dict):
+                value = str(option.get("value") or option.get("label") or "").strip()
+                label = str(option.get("label") or value).strip()
+            else:
+                value = str(option).strip()
+                label = value
+            if value:
+                options.append({"label": label or value, "value": value})
+        fields.append(
+            {
+                "key": key,
+                "title": str(item.get("title") or item.get("description") or "Question").strip(),
+                "description": str(item.get("description") or "").strip(),
+                "options": options,
+            }
+        )
+    return fields
+
+
+def _form_text(display_name: str, title: str, field: dict[str, Any], index: int, total: int) -> str:
+    heading = f"{display_name} — {title or 'The agent asks'}"
+    if total > 1:
+        heading += f" ({index + 1}/{total})"
+    text = f"{heading}\n\n{field.get('title') or 'Question'}"
+    description = field.get("description")
+    if description:
+        text += f"\n{description}"
+    return text
+
+
 class BotApp:
     def __init__(
         self,
@@ -63,6 +105,7 @@ class BotApp:
         # Telegram caps callback_data at 64 bytes; a short token keeps menus
         # usable without embedding session ids and model names in every button.
         self._choices: dict[str, tuple[str, str, str, str]] = {}
+        self._form_answers: dict[str, dict[str, Any]] = {}
         self.messenger: Messenger | None = messenger
         self.bot_id = 0
         self.bot_username = ""
@@ -608,31 +651,77 @@ class BotApp:
     async def _callback_form(self, message: Inbound, parts: list[str]) -> None:
         if len(parts) < 3:
             return
-        session_id, form_id, index = parts[0], parts[1], parts[2]
-        pending = self.store.get_pending(f"form:{form_id}")
+        session_id = parts[0]
+        try:
+            field_index, option_index = int(parts[1]), int(parts[2])
+        except ValueError:
+            return
+        pending = next(
+            (
+                item
+                for item in self.store.pending_for_session(session_id)
+                if item.kind == "form"
+            ),
+            None,
+        )
         if pending is None:
             if self.messenger:
                 await self.messenger.answer_callback(message.callback_id or "", "This control has expired.")
             return
-        options = pending.payload.get("options") or []
-        try:
-            choice = str(options[int(index)])
-        except (IndexError, ValueError):
+        fields = pending.payload.get("fields") or []
+        if not isinstance(fields, list) or not (0 <= field_index < len(fields)):
             if self.messenger:
                 await self.messenger.answer_callback(message.callback_id or "", "That option is gone.")
             return
-        accepted, _ = self.store.decide_pending(f"form:{form_id}", message.user_id, "answered")
+        field = fields[field_index]
+        options = field.get("options") or []
+        if not (0 <= option_index < len(options)):
+            if self.messenger:
+                await self.messenger.answer_callback(message.callback_id or "", "That option is gone.")
+            return
+
+        answers = self._form_answers.setdefault(pending.id, {})
+        answers[field["key"]] = options[option_index]["value"]
+        next_index = next(
+            (
+                index
+                for index, item in enumerate(fields)
+                if item.get("options") and item["key"] not in answers
+            ),
+            None,
+        )
+        if next_index is not None:
+            if self.messenger:
+                await self.messenger.answer_callback(message.callback_id or "", "Next question.")
+                await self.messenger.edit_text(
+                    message.chat_id,
+                    message.message_id,
+                    _form_text(
+                        message.display_name,
+                        str(pending.payload.get("form_title") or ""),
+                        fields[next_index],
+                        next_index,
+                        len(fields),
+                    ),
+                    keyboard=keyboards.form_keyboard(session_id, fields, next_index),
+                )
+            return
+
+        accepted, _ = self.store.decide_pending(pending.id, message.user_id, "answered")
         if not accepted:
             if self.messenger:
                 await self.messenger.answer_callback(message.callback_id or "", "Already answered.")
             return
-        await self.client.reply_form(session_id, form_id, {"answer": choice})
+        form_id = str(pending.payload.get("form_id") or pending.id.removeprefix("form:"))
+        await self.client.reply_form(session_id, form_id, {"answer": answers})
+        self._form_answers.pop(pending.id, None)
+        summary = ", ".join(str(value) for value in answers.values())
         if self.messenger:
             await self.messenger.answer_callback(message.callback_id or "", "Answered.")
             await self.messenger.edit_text(
                 message.chat_id,
                 message.message_id,
-                f"Answered by {message.display_name}: {choice}",
+                f"Answered by {message.display_name}: {summary}",
             )
 
     async def _callback_provider(self, message: Inbound, parts: list[str]) -> None:
@@ -738,10 +827,15 @@ class BotApp:
         if self.messenger is None:
             return
         if kind == PERMISSION_ASKED:
-            request_id = str(event.get("requestID") or event.get("id") or event.get("request") or "")
+            request_id = str(event.get("id") or event.get("requestID") or event.get("request") or "")
             if not request_id:
                 return
-            tool = event.get("tool") or event.get("permission") or event.get("title") or "a tool"
+            action = str(event.get("action") or event.get("tool") or event.get("permission") or "")
+            resources = event.get("resources") or []
+            detail = action or "a tool"
+            if isinstance(resources, list) and resources:
+                detail = f"{detail}: " + ", ".join(str(item) for item in resources[:3])
+            tool = event.get("title") or detail
             pending_id = f"permission:{request_id}"
             _, created = self.store.create_pending(
                 pending_id=pending_id,
@@ -764,10 +858,17 @@ class BotApp:
             return
 
         if kind == FORM_CREATED:
-            form_id = str(event.get("formID") or event.get("id") or "")
-            options = event.get("options") or event.get("choices") or []
-            if not form_id or not isinstance(options, list) or not options:
+            form = event.get("form")
+            if not isinstance(form, dict):
+                form = event.data
+            form_id = str(form.get("id") or event.get("formID") or "")
+            fields = _form_fields(form.get("fields"))
+            if not form_id or not fields:
                 return
+            active = next(
+                (index for index, field in enumerate(fields) if field.get("options")),
+                None,
+            )
             pending_id = f"form:{form_id}"
             _, created = self.store.create_pending(
                 pending_id=pending_id,
@@ -776,17 +877,31 @@ class BotApp:
                 chat_id=state.message.chat_id,
                 thread_id=state.message.thread_id,
                 telegram_message_id=None,
-                payload={"options": [str(option) for option in options]},
+                payload={
+                    "form_id": form_id,
+                    "form_title": str(form.get("title") or ""),
+                    "fields": fields,
+                },
             )
             if not created:
                 return
-            question = event.get("question") or event.get("title") or "The agent asks:"
+            self._form_answers[pending_id] = {}
+            field = fields[active if active is not None else 0]
+            text = _form_text(
+                state.message.display_name,
+                str(form.get("title") or ""),
+                field,
+                active if active is not None else 0,
+                len(fields),
+            )
             message_id = await self.messenger.send_text(
                 state.message.chat_id,
-                f"{state.message.display_name} — {question}",
+                text,
                 thread_id=state.message.thread_id,
-                keyboard=keyboards.form_keyboard(
-                    state.session_id, form_id, [str(option) for option in options]
+                keyboard=(
+                    keyboards.form_keyboard(state.session_id, fields, active)
+                    if active is not None
+                    else None
                 ),
             )
             self.store.set_pending_message(pending_id, message_id)

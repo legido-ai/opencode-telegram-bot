@@ -26,7 +26,7 @@ from app.opencode.events import (
 )
 from app.speech.tts import MAX_INPUT_CHARS, TtsClient, TtsError
 from app.store import Store
-from app.telegram.audio_filter import strip_audio_meta, wants_audio
+from app.telegram.audio_filter import strip_audio_meta, strip_audio_request, wants_audio
 from app.telegram.dashboard import dashboard_text
 from app.telegram.footer import RunStats, format_cost, format_sign_off, format_tokens
 from app.telegram.identity import attribution_prefix, build_prompt
@@ -51,6 +51,10 @@ AUDIO_GENERATION_PROMPT = (
 )
 
 _SIGN_OFF_RE = re.compile(r"\s*✅\s*I(?:'m| am) done\.?\s*$")
+
+
+class RunTimedOut(TimeoutError):
+    """The agent stayed silent longer than the configured run budget."""
 
 
 def strip_sign_off(text: str) -> str:
@@ -279,7 +283,40 @@ class Runner:
             message.chat_id, message.thread_id, message.chat_type, message.chat_title
         )
         participants = self._store.roster()
-        prompt = build_prompt(message, job.trigger, participants, note=job.prompt_note)
+
+        prefix = attribution_prefix(message, len(participants))
+        audio_requested = wants_audio(job.trigger.text)
+        audio_language = requested_language(job.trigger.text) if audio_requested else None
+        audio_voice = (
+            self._settings.tts_voice
+            if audio_language == "es"
+            else self._settings.tts_voice_audio
+        ) if audio_requested else None
+        # A request can carry both a task and an audio delivery instruction
+        # (“foo bar. Reply with audio in Spanish”). Strip only the delivery
+        # part: the task still belongs to the coding agent. When nothing
+        # remains, the message asked for a phrase, so use the transient text
+        # endpoint instead of starting tools for an empty prompt.
+        audio_task = strip_audio_request(job.trigger.text) if audio_requested else ""
+        transient_audio = audio_requested and not audio_task
+        prompt_note = job.prompt_note
+        if audio_requested and audio_task:
+            spoken_language = {
+                "es": "Spanish (Castilian)",
+                "en": "English",
+            }.get(audio_language or "", "the user's language")
+            audio_note = (
+                f"The user will hear your answer as audio in {spoken_language}. "
+                "Answer in that language with one or two short sentences that sound "
+                "natural when spoken. Do not use markdown, lists or code blocks."
+            )
+            prompt_note = f"{prompt_note}\n{audio_note}" if prompt_note else audio_note
+        prompt_trigger = (
+            Trigger(kind=job.trigger.kind, text=audio_task, quote=job.trigger.quote)
+            if audio_requested and audio_task
+            else job.trigger
+        )
+        prompt = build_prompt(message, prompt_trigger, participants, note=prompt_note)
 
         session_id = conversation.active_session_id
         created = False
@@ -310,13 +347,6 @@ class Runner:
         )
 
         prefix = attribution_prefix(message, len(participants))
-        audio_requested = wants_audio(job.trigger.text)
-        audio_language = requested_language(job.trigger.text) if audio_requested else None
-        audio_voice = (
-            self._settings.tts_voice
-            if audio_language == "es"
-            else self._settings.tts_voice_audio
-        ) if audio_requested else None
         auto_speak = conversation.tts_mode == "all" or (
             conversation.tts_mode == "auto" and message.voice_input
         )
@@ -327,7 +357,9 @@ class Runner:
             and self._tts.available
             and (auto_speak or audio_requested)
         )
-        filter_audio_meta = speak and audio_requested
+        # Only the transient path needs the disclaimer filter; an answer that
+        # came from the coding agent was never asked to emit audio itself.
+        filter_audio_meta = speak and transient_audio
         editor = StreamEditor(
             self.messenger.send_text,
             self.messenger.edit_text,
@@ -357,10 +389,11 @@ class Runner:
 
         try:
             await editor.start()
-            if audio_requested and speak:
-                # Do not hand an audio request to the coding agent: it reaches
-                # for tools, builds a TTS script and asks for a phrase. Transient
-                # generation returns the words to speak instead.
+            if transient_audio:
+                # Only an audio request without a task is generated here: the
+                # coding agent would reach for tools, build a TTS script and ask
+                # for a phrase. Transient generation returns the words to speak
+                # instead. A request that carries a task runs normally below.
                 answer = await self._generate_audio_text(
                     session_id, job.trigger.text, audio_language
                 )
@@ -424,6 +457,19 @@ class Runner:
             status, error_kind = "failed", "session_gone"
             await editor.finish(
                 "This session no longer exists on the server. Send the message again to start a new one."
+            )
+        except RunTimedOut:
+            status, error_kind = "failed", "timeout"
+            # A silent run may still be holding the session busy (a tool call,
+            # or a question whose form event was missed). Stop it so the next
+            # message is not refused with "still working".
+            try:
+                await self._client.interrupt(session_id)
+            except OpenCodeError:
+                log.info("could not interrupt the timed-out run", extra={"session_id": session_id})
+            self._store.cancel_pending_for_session(session_id)
+            await editor.finish(
+                "The agent did not answer in time. I stopped that run; retry or split the task."
             )
         except Busy:
             status, error_kind = "failed", "busy"
@@ -535,10 +581,9 @@ class Runner:
         while True:
             try:
                 event = await asyncio.wait_for(events.get(), timeout=self._run_timeout)
-            except TimeoutError:
+            except TimeoutError as exc:
                 log.warning("run timed out", extra={"session_id": state.session_id})
-                editor.append("\n\n[timed out waiting for the agent]")
-                return
+                raise RunTimedOut() from exc
 
             if (delta := event.text_delta) is not None:
                 editor.append(delta)

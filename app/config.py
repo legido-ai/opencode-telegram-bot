@@ -46,6 +46,7 @@ class Settings:
     health_host: str
     health_port: int
     max_attachment_mb: int
+    run_timeout_seconds: float
     log_level: str
     stt_url: str
     stt_api_key: str
@@ -120,6 +121,13 @@ class Settings:
         if max_mb <= 0 or max_mb > 50:
             raise ConfigError("MAX_ATTACHMENT_MB must be between 1 and 50")
 
+        try:
+            run_timeout = float(env.get("RUN_TIMEOUT_SECONDS") or 1800)
+        except ValueError as exc:
+            raise ConfigError("RUN_TIMEOUT_SECONDS must be a number of seconds") from exc
+        if run_timeout <= 0:
+            raise ConfigError("RUN_TIMEOUT_SECONDS must be greater than zero")
+
         request_format = (env.get("STT_REQUEST_FORMAT") or "multipart").strip().lower()
         if request_format not in STT_REQUEST_FORMATS:
             raise ConfigError(
@@ -148,6 +156,7 @@ class Settings:
             health_host=(env.get("HEALTH_HOST") or "127.0.0.1").strip(),
             health_port=port,
             max_attachment_mb=max_mb,
+            run_timeout_seconds=run_timeout,
             log_level=level,
             stt_url=(env.get("STT_API_URL") or "").strip().rstrip("/"),
             stt_api_key=(env.get("STT_API_KEY") or "").strip(),

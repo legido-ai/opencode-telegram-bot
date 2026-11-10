@@ -30,6 +30,8 @@ class FakeOpenCode:
         self.fail_prompt: int | None = None
         self.publish_on_prompt = True
         self.permission_request: tuple[str, str] | None = None
+        self.form_request: dict[str, Any] | None = None
+        self._form_wait: asyncio.Event | None = None
         self.answer_error: str | None = None
         self.session_stats: dict[str, Any] = {
             "cost": 0.03,
@@ -63,8 +65,21 @@ class FakeOpenCode:
             return
         if self.permission_request is not None:
             request_id, tool = self.permission_request
-            self.emit("permission.asked", session_id, requestID=request_id, tool=tool)
+            self.emit(
+                "permission.asked",
+                session_id,
+                id=request_id,
+                sessionID=session_id,
+                action=tool,
+                resources=[],
+            )
             await asyncio.sleep(0)
+        if self.form_request is not None:
+            self._form_wait = asyncio.Event()
+            form = dict(self.form_request)
+            form["sessionID"] = session_id
+            self.emit("form.created", session_id, form=form)
+            await self._form_wait.wait()
         for chunk in self.script:
             self.emit("session.text.delta", session_id, delta=chunk)
             await asyncio.sleep(0)
@@ -178,6 +193,8 @@ class FakeOpenCode:
             session_id, form_id = parts[3], parts[5]
             body = json.loads(request.content or b"{}")
             self.form_replies.append((session_id, form_id, body))
+            if self._form_wait is not None:
+                self._form_wait.set()
             return httpx.Response(204)
 
         if path.endswith("/model") and method == "POST":

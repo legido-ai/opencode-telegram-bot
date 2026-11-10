@@ -81,3 +81,50 @@ async def test_abort_cancels_pending_interactions(bot_app: BotApp, fake_server, 
     inbound = bot_app._inbound(update("@oc3bot stop", entities=MENTION, update_id=2))
     await bot_app.runner.abort(inbound)
     assert store.get_pending("permission:req_3").state == "cancelled"
+
+
+async def test_agent_question_is_surfaced_and_answered_from_buttons(
+    bot_app: BotApp, fake_server, messenger, store
+) -> None:
+    fake_server.form_request = {
+        "id": "frm_1",
+        "title": "Questions",
+        "metadata": {"kind": "question"},
+        "fields": [
+            {
+                "key": "q0",
+                "title": 'Clarify "OZI"',
+                "description": "What do you mean by OZI?",
+                "type": "string",
+                "options": [
+                    {"value": "OCI compute instances", "label": "OCI compute instances"},
+                    {"value": "Running containers", "label": "Running containers"},
+                ],
+            }
+        ],
+    }
+    await bot_app.on_message(
+        update("@oc3bot what are the OZI instances?", entities=MENTION, update_id=1),
+        SimpleNamespace(bot=None),
+    )
+
+    await wait_for(lambda: any(item.keyboard is not None for item in messenger.sent))
+    session_id = store.get_conversation(-100123, 0).active_session_id
+    assert session_id is not None
+    pending = store.get_pending("form:frm_1")
+    assert pending is not None and pending.state == "pending"
+    assert any('Clarify "OZI"' in item.text for item in messenger.sent)
+
+    await bot_app.on_callback(
+        callback_update(f"f:{session_id}:0:0", update_id=93, user_id=222, first_name="Luis"),
+        SimpleNamespace(bot=None),
+    )
+    await wait_for(lambda: fake_server.form_replies != [])
+
+    assert fake_server.form_replies == [
+        (session_id, "frm_1", {"answer": {"q0": "OCI compute instances"}})
+    ]
+    assert store.get_pending("form:frm_1").state == "answered"
+    await wait_for(
+        lambda: any("Hello" in item.text for item in messenger.sent + messenger.edited)
+    )

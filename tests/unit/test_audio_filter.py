@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.telegram.audio_filter import strip_audio_meta, wants_audio
+from app.telegram.audio_filter import strip_audio_meta, strip_audio_request, wants_audio
 
 SCREENSHOT_ANSWER = (
     "Ese bloque <system-update> ha llegado dentro de tu mensaje, no del harness — y es la "
@@ -18,8 +18,30 @@ def test_audio_intent_is_detected_in_spanish_and_english() -> None:
     assert wants_audio("genera un audio corto con una frase.")
     assert wants_audio("Dime una frase en inglés, pero genera un audio.")
     assert wants_audio("send me a voice message with a quote")
+    assert wants_audio("foo bar. Reply with audio in spanish")
     assert not wants_audio("explain the audio transcription API")
     assert not wants_audio("what is the weather?")
+
+
+def test_delivery_instruction_is_removed_and_the_task_remains() -> None:
+    assert strip_audio_request("foo bar. Reply with audio in spanish") == "foo bar"
+    assert strip_audio_request("foo bar, please respond with a voice in Spanish") == "foo bar"
+    assert strip_audio_request("foo bar. responde en castellano") == "foo bar"
+    assert strip_audio_request("foo bar. genera un audio") == "foo bar"
+    assert strip_audio_request("¿Cuáles son las instancias de OCI? responde en castellano") == (
+        "¿Cuáles son las instancias de OCI?"
+    )
+    assert strip_audio_request(
+        "Entonces pon manos a la obra, evaluar arquitectura y me dices "
+        "respondeme con una voz en castellano."
+    ) == "pon manos a la obra, evaluar arquitectura"
+
+
+def test_pure_audio_requests_leave_no_task() -> None:
+    assert strip_audio_request("responde en castellano") == ""
+    assert strip_audio_request("genera un audio corto con una frase.") == ""
+    assert strip_audio_request("send me a voice message with a quote") == ""
+    assert strip_audio_request("Dime una frase en inglés, pero genera un audio.") == ""
 
 
 def test_capability_disclaimers_are_removed_but_the_answer_stays() -> None:

@@ -33,6 +33,7 @@ PERMISSION_ASKED = "permission.asked"
 FORM_CREATED = "form.created"
 
 _SESSION_KEYS = ("sessionID", "sessionId", "session_id", "session")
+_NESTED_PAYLOADS = ("form", "permission", "request")
 
 
 @dataclass(slots=True)
@@ -70,6 +71,24 @@ def _first(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return None
 
 
+def _flatten(data: dict[str, Any]) -> dict[str, Any]:
+    """Lift a nested payload (``data.form``) next to its envelope keys.
+
+    V2 publishes ``form.created`` as ``{"data": {"form": {...}}}``. The form's
+    own ``id`` and ``sessionID`` live one level down, so a flat reader would
+    drop the event as session-less and the agent would wait forever for an
+    answer nobody could give.
+    """
+
+    for key in _NESTED_PAYLOADS:
+        nested = data.get(key)
+        if isinstance(nested, dict):
+            merged = dict(data)
+            merged.update(nested)
+            return merged
+    return data
+
+
 def decode_event(payload: dict[str, Any]) -> Event | None:
     kind = _first(payload, ("type", "kind", "event", "name"))
     if not isinstance(kind, str) or not kind:
@@ -78,6 +97,7 @@ def decode_event(payload: dict[str, Any]) -> Event | None:
     data = payload.get("properties")
     if not isinstance(data, dict):
         data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    data = _flatten(data)
 
     session_id = _first(payload, _SESSION_KEYS) or _first(data, _SESSION_KEYS)
     if isinstance(session_id, dict):

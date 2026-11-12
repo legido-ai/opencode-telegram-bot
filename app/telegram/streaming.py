@@ -87,6 +87,8 @@ class StreamEditor:
         self._message_ids: list[int] = []
         self._last_edit = 0.0
         self._started = False
+        self._placeholder_started = 0.0
+        self._progress_seconds = -1
 
     @property
     def text(self) -> str:
@@ -130,6 +132,7 @@ class StreamEditor:
 
         self._started = True
         self._last_edit = self._now()
+        self._placeholder_started = self._last_edit
         if not self._placeholder:
             return
         message_id = await self._send(
@@ -142,6 +145,31 @@ class StreamEditor:
         self._message_ids.append(message_id)
         self._sent.append(self._placeholder)
         self._placeholder_only = True
+
+    async def tick(self) -> None:
+        """Show elapsed time in the placeholder until the first token arrives.
+
+        The bridge keeps the typing action alive separately; this makes the
+        bubble itself say how long the agent has been working, so a slow tool
+        call reads as progress instead of a stuck three-dot message.
+        """
+
+        if not self._placeholder_only or self._buffer.strip() or not self._message_ids:
+            return
+        elapsed = int(self._now() - self._placeholder_started)
+        if elapsed < 8 or elapsed - self._progress_seconds < 5:
+            return
+        self._progress_seconds = elapsed
+        text = f"⏳ Working… {elapsed}s"
+        try:
+            await self._edit(self._chat_id, self._message_ids[0], text, markdown=False)
+        except Exception as exc:  # noqa: BLE001
+            # The final flush falls back to a fresh message when the bubble is
+            # gone; a progress edit must never end the run.
+            log.debug("placeholder progress edit failed: %s", type(exc).__name__)
+            return
+        if self._sent:
+            self._sent[0] = text
 
     async def flush(self, *, force: bool = False) -> None:
         # Audio-request answers are held back until the filter has removed the

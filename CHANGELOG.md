@@ -19,6 +19,20 @@ Validated 2026-11-12 on `@legido_opencode_bot` from Telegram Web.
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-11-12
+
+### Added
+
+- While the agent is silent, the `…` placeholder now becomes
+  `⏳ Working… 8s` after 8 seconds and refreshes every 5 seconds until the first
+  token replaces it in the same bubble. The typing action keeps refreshing
+  alongside it, so a slow tool call reads as progress instead of a stuck
+  three-dot message (the same display Pi uses).
+- A message sent while OpenCode is running joins the live turn with
+  `delivery: "steer"` and the chat gets a short “still processing, sent as a
+  steer” notice. The steered answer streams into the same message with one
+  sign-off, matching the TUI and `grinev/opencode-telegram-bot`.
+
 ### Fixed
 
 - `form.created` events are read from the V2 `data.form` envelope, so the
@@ -37,13 +51,6 @@ Validated 2026-11-12 on `@legido_opencode_bot` from Telegram Web.
   `data:<mime>;base64,...` URI plus an optional name. The old `{type, path}`
   payload was rejected with a 400, so a photo with a caption ended in “The agent
   server rejected that request.”
-
-### Added
-
-- A message sent while OpenCode is running joins the live turn with
-  `delivery: "steer"` and the chat gets a short “still processing, sent as a
-  steer” notice. The steered answer streams into the same message with one
-  sign-off, matching the TUI and `grinev/opencode-telegram-bot`.
 
 ## [0.2.1] — 2026-11-07
 

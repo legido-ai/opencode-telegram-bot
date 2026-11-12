@@ -65,6 +65,43 @@ async def test_placeholder_is_replaced_in_the_same_message() -> None:
     assert messenger.edited[-1].text == "answer"
 
 
+async def test_placeholder_shows_elapsed_working_time() -> None:
+    messenger = FakeMessenger()
+    clock = {"now": 100.0}
+
+    def now() -> float:
+        return clock["now"]
+
+    editor = StreamEditor(
+        messenger.send_text, messenger.edit_text, chat_id=1, min_interval=1.0, now=now
+    )
+    await editor.start()
+    placeholder = messenger.sent[0]
+    assert placeholder.text == "…"
+
+    clock["now"] += 5
+    await editor.tick()
+    assert messenger.last_text == "…"  # below the 8 s threshold
+
+    clock["now"] += 3  # 8 s
+    await editor.tick()
+    assert messenger.last_text == "⏳ Working… 8s"
+    assert messenger.edited[-1].message_id == placeholder.message_id
+
+    clock["now"] += 2  # updates are 5 s apart
+    await editor.tick()
+    assert messenger.last_text == "⏳ Working… 8s"
+
+    clock["now"] += 3  # 13 s
+    await editor.tick()
+    assert messenger.last_text == "⏳ Working… 13s"
+
+    editor.append("answer")
+    await editor.flush(force=True)
+    assert messenger.last_text == "answer"
+    assert messenger.edited[-1].message_id == placeholder.message_id
+
+
 async def test_finish_without_text_leaves_the_notice_instead_of_the_dots() -> None:
     messenger = FakeMessenger()
     editor = StreamEditor(

@@ -518,25 +518,29 @@ class Runner:
     async def _typing_loop(
         self, message: Inbound, editor: StreamEditor, stop: asyncio.Event
     ) -> None:
-        """Refresh the typing action while the chat still shows the dots.
+        """Refresh the typing action and the elapsed-time placeholder.
 
-        The dots live in the placeholder bubble (``editor.start``); this keeps
+        The dots live in the placeholder bubble (``editor.start``). This keeps
         the client-side typing animation alive for the clients that render it,
-        and stops as soon as real text lands.
+        and lets the bubble show ``⏳ Working… Ns`` while the agent is silent.
+        It stops as soon as real text lands.
         """
 
+        last_typing = time.monotonic()
         while not stop.is_set():
             if editor.text.strip():
                 return
+            now = time.monotonic()
+            if now - last_typing >= 4.0:
+                last_typing = now
+                if self.messenger is not None:
+                    await self.messenger.send_typing(message.chat_id, message.thread_id)
+            await editor.tick()
             try:
-                await asyncio.wait_for(stop.wait(), timeout=4.0)
+                await asyncio.wait_for(stop.wait(), timeout=1.0)
                 return
             except TimeoutError:
                 pass
-            if editor.text.strip():
-                return
-            if self.messenger is not None:
-                await self.messenger.send_typing(message.chat_id, message.thread_id)
 
     async def _maybe_speak(
         self,

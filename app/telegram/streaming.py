@@ -65,6 +65,7 @@ class StreamEditor:
         prefix: str = "",
         markdown: bool = False,
         defer_until_finish: bool = False,
+        placeholder: str | None = "…",
     ) -> None:
         self._send = send
         self._edit = edit
@@ -76,6 +77,8 @@ class StreamEditor:
         self._prefix = prefix
         self._markdown = markdown
         self._defer = defer_until_finish
+        self._placeholder = placeholder
+        self._placeholder_only = False
         self._buffer = ""
         self._sent: list[str] = []
         self._message_ids: list[int] = []
@@ -108,18 +111,34 @@ class StreamEditor:
         return chunk
 
     def _due(self) -> bool:
+        # The first real text always shows at once: the placeholder must be
+        # replaced the moment it stops being the truth.
+        if self._placeholder_only:
+            return True
         return self._now() - self._last_edit >= self._interval
 
     async def start(self) -> None:
-        """Mark the answer as open.
+        """Open the answer with the three dots the chat is waiting for.
 
-        Nothing is sent yet: while the agent is thinking the chat shows the
-        typing indicator, not an empty bubble. The first flush creates the
-        message.
+        Telegram Web hides the typing action while the agent is still silent,
+        so a placeholder bubble goes out immediately and the first flush turns
+        it into the answer (the same three dots Pi shows).
         """
 
         self._started = True
         self._last_edit = self._now()
+        if not self._placeholder:
+            return
+        message_id = await self._send(
+            self._chat_id,
+            self._placeholder,
+            thread_id=self._thread_id,
+            reply_to=self._reply_to,
+            markdown=False,
+        )
+        self._message_ids.append(message_id)
+        self._sent.append(self._placeholder)
+        self._placeholder_only = True
 
     async def flush(self, *, force: bool = False) -> None:
         # Audio-request answers are held back until the filter has removed the
@@ -130,7 +149,9 @@ class StreamEditor:
         # is nothing to coalesce.
         if not force and self._message_ids and not self._due():
             return
-        if not self._buffer.strip() and not self._message_ids:
+        if not self._buffer.strip():
+            # Nothing has arrived yet: the dots stay, and there is nothing to
+            # replace them with.
             return
 
         chunks = split_message(self._buffer) or [""]
@@ -153,11 +174,15 @@ class StreamEditor:
                 )
                 self._message_ids.append(message_id)
                 self._sent.append(rendered)
+        self._placeholder_only = False
         self._last_edit = self._now()
 
     async def finish(self, footer: str = "") -> None:
-        if not self._message_ids and not self._buffer.strip():
-            self._buffer = "…"
-        if footer:
-            self._buffer = f"{self._buffer.rstrip()}\n\n{footer}" if self._buffer.strip() else footer
+        text = self._buffer.strip()
+        if not text:
+            # Nothing streamed: a notice (timeout, failure) takes the dots'
+            # place; without one the dots are all the chat gets.
+            self._buffer = footer or self._placeholder or "…"
+        elif footer:
+            self._buffer = f"{self._buffer.rstrip()}\n\n{footer}"
         await self.flush(force=True)

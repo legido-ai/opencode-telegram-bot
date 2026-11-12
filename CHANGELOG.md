@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. Format follows
 Keep a Changelog; versions use semantic versioning.
 
+## [0.2.2] — 2026-11-12
+
+### Added
+
+- The chat now shows a `…` placeholder the instant a prompt is accepted, and
+  the agent's first text replaces it in the same bubble. Telegram Web renders
+  no typing animation while the model is silent, so a slow run used to look
+  like a dropped message (Pi behaves the same way). The typing action is still
+  refreshed alongside it for the clients that do render it.
+
 ## [Unreleased]
 
 ### Fixed

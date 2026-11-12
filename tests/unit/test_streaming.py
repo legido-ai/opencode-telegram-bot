@@ -31,21 +31,62 @@ async def test_editor_coalesces_edits() -> None:
         messenger.send_text, messenger.edit_text, chat_id=1, min_interval=1.0, now=now
     )
     await editor.start()
-    assert messenger.sent == []  # nothing is sent while the agent thinks
+    # The three dots go out at once: the chat must show it is working even when
+    # the client hides the typing action.
+    assert [sent.text for sent in messenger.sent] == ["…"]
 
     editor.append("hello")
     await editor.flush()
-    assert len(messenger.sent) == 1
+    assert [sent.text for sent in messenger.sent] == ["…"]
+    assert messenger.last_text == "hello"  # the dots became the answer
     clock["now"] += 0.1
     editor.append(" world")
     await editor.flush()
-    # Too soon: no edit yet.
-    assert messenger.edited == []
+    # Too soon: no second edit yet.
+    assert len(messenger.edited) == 1
 
     clock["now"] += 1.5
     await editor.flush()
-    assert messenger.edited
+    assert len(messenger.edited) == 2
     assert "hello world" in messenger.last_text
+
+
+async def test_placeholder_is_replaced_in_the_same_message() -> None:
+    messenger = FakeMessenger()
+    editor = StreamEditor(
+        messenger.send_text, messenger.edit_text, chat_id=1, min_interval=5.0, now=lambda: 0.0
+    )
+    await editor.start()
+    placeholder = messenger.sent[0]
+    editor.append("answer")
+    await editor.flush()
+    assert messenger._next_id == placeholder.message_id  # no second bubble
+    assert messenger.edited[-1].message_id == placeholder.message_id
+    assert messenger.edited[-1].text == "answer"
+
+
+async def test_finish_without_text_leaves_the_notice_instead_of_the_dots() -> None:
+    messenger = FakeMessenger()
+    editor = StreamEditor(
+        messenger.send_text, messenger.edit_text, chat_id=1, min_interval=0.0, now=lambda: 0.0
+    )
+    await editor.start()
+    await editor.finish("The agent did not answer in time.")
+    assert messenger.last_text == "The agent did not answer in time."
+
+
+async def test_placeholder_can_be_disabled() -> None:
+    messenger = FakeMessenger()
+    editor = StreamEditor(
+        messenger.send_text,
+        messenger.edit_text,
+        chat_id=1,
+        min_interval=0.0,
+        now=lambda: 0.0,
+        placeholder=None,
+    )
+    await editor.start()
+    assert messenger.sent == []
 
 
 async def test_editor_splits_growing_answer_into_new_messages() -> None:
@@ -71,15 +112,15 @@ async def test_deferred_editor_shows_only_the_filtered_final_text() -> None:
         defer_until_finish=True,
     )
     await editor.start()
+    assert [sent.text for sent in messenger.sent] == ["…"]  # dots while it thinks
     editor.append("No puedo generar audio.")
     await editor.flush()
-    assert messenger.sent == []
+    assert [sent.text for sent in messenger.sent] == ["…"]
 
     editor.replace('"Small steps still move you forward."')
     await editor.finish()
-    assert [sent.text for sent in messenger.sent] == [
-        '"Small steps still move you forward."'
-    ]
+    assert [sent.text for sent in messenger.sent] == ["…"]
+    assert messenger.last_text == '"Small steps still move you forward."'
 
 
 async def test_editor_prefixes_attribution_once() -> None:

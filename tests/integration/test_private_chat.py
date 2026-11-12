@@ -235,11 +235,23 @@ async def test_agent_error_is_shown_instead_of_silence(bot_app: BotApp, messenge
     assert any("⚠️" in item.text for item in messenger.sent + messenger.edited)
 
 
-async def test_typing_indicator_replaces_the_placeholder(bot_app: BotApp, messenger) -> None:
+async def test_dots_show_while_thinking_and_then_become_the_answer(
+    bot_app: BotApp, messenger, fake_server
+) -> None:
+    fake_server.gate = asyncio.Event()
     await send(bot_app, update("slow question", chat_type="private", chat_id=111, update_id=101))
-    await wait_for(lambda: bool(messenger.typing))
-    assert messenger.typing[0][0] == 111
-    assert all("…" not in item.text for item in messenger.sent)
+
+    # A placeholder bubble goes out at once: Telegram Web shows nothing while
+    # the agent is silent, and that is exactly when the user needs a signal.
+    await wait_for(lambda: any(item.text == "…" for item in messenger.sent))
+    assert messenger.typing and messenger.typing[0][0] == 111
+
+    fake_server.gate.set()
+    await wait_for(lambda: any("Hello" in item.text for item in messenger.edited))
+    placeholder = next(item for item in messenger.sent if item.text == "…")
+    assert any(edit.message_id == placeholder.message_id for edit in messenger.edited)
+    # One answer bubble, not two: the dots were edited, never abandoned.
+    assert sum(1 for item in messenger.sent if item.text == "…") == 1
 
 
 async def test_new_session_resets_the_context_counter(bot_app: BotApp, messenger) -> None:

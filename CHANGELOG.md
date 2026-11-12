@@ -12,6 +12,8 @@ Keep a Changelog; versions use semantic versioning.
   no typing animation while the model is silent, so a slow run used to look
   like a dropped message (Pi behaves the same way). The typing action is still
   refreshed alongside it for the clients that do render it.
+- If the placeholder is deleted before the answer lands, or Telegram refuses the
+  edit, the answer is sent as a fresh message instead of disappearing.
 
 ## [Unreleased]
 

@@ -75,6 +75,22 @@ async def test_finish_without_text_leaves_the_notice_instead_of_the_dots() -> No
     assert messenger.last_text == "The agent did not answer in time."
 
 
+async def test_answer_is_resent_when_the_bubble_cannot_be_edited() -> None:
+    messenger = FakeMessenger()
+
+    async def broken_edit(*_args, **_kwargs) -> None:
+        raise RuntimeError("message to edit not found")
+
+    editor = StreamEditor(
+        messenger.send_text, broken_edit, chat_id=1, min_interval=0.0, now=lambda: 0.0
+    )
+    await editor.start()
+    editor.append("answer")
+    await editor.flush()
+    # The dots were deleted (or the edit was refused): the answer still lands.
+    assert [sent.text for sent in messenger.sent] == ["…", "answer"]
+
+
 async def test_placeholder_can_be_disabled() -> None:
     messenger = FakeMessenger()
     editor = StreamEditor(

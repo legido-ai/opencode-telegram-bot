@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import html
+import logging
 import time
 from collections.abc import Awaitable, Callable
 
 LIMIT = 4096
 ATTRIBUTION_LIMIT = 12
+
+log = logging.getLogger("bot.streaming")
 
 
 def escape(text: str) -> str:
@@ -160,9 +163,19 @@ class StreamEditor:
             if index < len(self._message_ids):
                 if index < len(self._sent) and self._sent[index] == rendered:
                     continue
-                await self._edit(
-                    self._chat_id, self._message_ids[index], rendered, markdown=self._markdown
-                )
+                try:
+                    await self._edit(
+                        self._chat_id, self._message_ids[index], rendered, markdown=self._markdown
+                    )
+                except Exception as exc:  # deleted bubble or a refused edit
+                    log.warning("edit failed (%s); sending a fresh message", type(exc).__name__)
+                    self._message_ids[index] = await self._send(
+                        self._chat_id,
+                        rendered,
+                        thread_id=self._thread_id,
+                        reply_to=self._reply_to,
+                        markdown=self._markdown,
+                    )
                 self._sent[index] = rendered
             else:
                 message_id = await self._send(

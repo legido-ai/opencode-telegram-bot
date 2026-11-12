@@ -15,6 +15,8 @@ Keep a Changelog; versions use semantic versioning.
 - If the placeholder is deleted before the answer lands, or Telegram refuses the
   edit, the answer is sent as a fresh message instead of disappearing.
 
+Validated 2026-11-12 on `@legido_opencode_bot` from Telegram Web.
+
 ## [Unreleased]
 
 ### Fixed
